@@ -38,24 +38,6 @@ CHAPTER_PATTERN = re.compile(
 CN_NUM = {'零': 0, '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
           '六': 6, '七': 7, '八': 8, '九': 9, '十': 10, '百': 100, '千': 1000}
 
-# 非故事内容检测 (播客头尾、广告、推广语等)
-NON_STORY_PATTERNS = [
-    re.compile(r'欢迎[您你]收听'),           # 欢迎您收听由喜马拉雅出品
-    re.compile(r'听众朋友'),                  # 听众朋友，本集已播讲完毕
-    re.compile(r'本集已播讲完毕'),            # 播客结束语
-    re.compile(r'请订阅专辑'),                # 订阅提醒
-    re.compile(r'下集精彩继续'),              # 下集预告
-    re.compile(r'关注主播'),                  # 关注提醒
-    re.compile(r'别忘了[点赞收藏]'),          # 互动提醒
-    re.compile(r'由喜马拉雅出品'),            # 出品方
-    re.compile(r'由.{1,6}(出品|播讲|演播)'),  # XX出品/播讲/演播
-    re.compile(r'欢迎订阅'),                  # 欢迎订阅
-]
-
-def is_non_story_content(text):
-    """判断文本是否为非故事内容（播客头尾、广告等）"""
-    return any(p.search(text) for p in NON_STORY_PATTERNS)
-
 # 引号正则 (中文引号 + 英文引号)
 QUOTE_PATTERN = re.compile(
     r'[\u300c\u201c\u201d\u2018\u2019\u300a\u3010]'
@@ -195,28 +177,18 @@ def split_chapters(txt_path, output_dir):
 
 
 def extract_last_meaningful_text(text):
-    """提取文本中最后一个有意义的文本片段(台词或旁白末句)
-    
-    自动跳过末尾的非故事内容（播客结束语、章节标题等），
-    从倒数方向找到第一个属于故事正文的行。
-    返回完整行内容（不做引号提取），以保证关键词比对有足够文本量。
-    """
+    """提取文本中最后一个有意义的文本片段(台词或旁白末句)"""
     lines = [l.strip() for l in text.strip().split('\n') if l.strip()]
     if not lines:
         return ''
 
-    # 从末尾反向查找，跳过非故事内容
-    for i in range(len(lines) - 1, -1, -1):
-        line = lines[i]
-        # 跳过章节标题
-        if CHAPTER_PATTERN.match(line):
-            continue
-        # 跳过非故事内容（播客结束语等）
-        if is_non_story_content(line):
-            continue
-        return line
+    last_line = lines[-1]
 
-    return ''
+    # 如果最后一行是章节标题，取倒数第二行
+    if CHAPTER_PATTERN.match(last_line) and len(lines) > 1:
+        last_line = lines[-2]
+
+    return last_line.strip()
 
 
 def fidelity_check(txt_path, json_path):
