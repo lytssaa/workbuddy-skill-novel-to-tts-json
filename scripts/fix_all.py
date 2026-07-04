@@ -12,10 +12,54 @@
 import re, json, os, sys
 
 
+def pre_fix_bare_quotes(raw_text):
+    """
+    文本级预修复：在 json.load 之前，修复 content 值中裸 ASCII 双引号。
+    兼容 "content": " 和 "content":" 两种格式。
+    """
+    lines = raw_text.split('\n')
+    fixed_lines = []
+    fixed_count = 0
+    for line in lines:
+        for marker in ['"content": "', '"content":"']:
+            idx = line.find(marker)
+            if idx >= 0:
+                prefix = line[:idx + len(marker)]
+                rest = line[idx + len(marker):]
+                # content 结束标记优先级
+                end_markers = ['", "delay"', '","delay"', '",', '"}', '"]']
+                end_idx = -1
+                for em in end_markers:
+                    end_idx = rest.find(em)
+                    if end_idx >= 0:
+                        break
+                if end_idx >= 0:
+                    body = rest[:end_idx]       # content body（可能含裸引号）
+                    suffix = rest[end_idx:]     # 从关闭 " 开始
+                    if '"' in body:
+                        parts = body.split('"')
+                        fixed_parts = []
+                        for i, part in enumerate(parts):
+                            if i % 2 == 0:
+                                fixed_parts.append(part)
+                            else:
+                                fixed_parts.append('\u300c' + part + '\u300d')
+                        line = prefix + ''.join(fixed_parts) + suffix
+                        fixed_count += 1
+                break  # 匹配到一个 marker 就跳过其他的
+        fixed_lines.append(line)
+    if fixed_count > 0:
+        print(f"  🔧 预修复 content 内裸引号: {fixed_count} 处")
+    return '\n'.join(fixed_lines)
+
+
 def fix_single_file(filepath):
     """修复单个 JSON 文件"""
     with open(filepath, "r", encoding="utf-8") as f:
         content = f.read()
+
+    # 0. 文本级预修复：在 json.parse 前修复 content 内的裸 ASCII 双引号
+    content = pre_fix_bare_quotes(content)
 
     # 1. 修复 content 值中的未转义双引号
     lines = content.split('\n')

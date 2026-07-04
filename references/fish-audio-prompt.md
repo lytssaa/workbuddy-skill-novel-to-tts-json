@@ -47,6 +47,30 @@
 | 场景切换 | 2000ms | 1500-2500 |
 | 对话轮换（不同角色之间） | 500ms | — |
 
+### 4.5 ⚠️ 引号转义红线（强制，违反则 JSON 解析失败）
+
+JSON content 字段内**严禁出现未转义的 ASCII 双引号 `"` (U+0022)**，它与 JSON 字符串定界符冲突，会导致 `json.load()` 报错。
+
+| 原文写法 | 问题 | 正确写法 |
+|----------|------|----------|
+| `"content": "解放前跟同一个"庄户嘴"的佃农。"` | `"庄户嘴"` 中的 `"` 被解析器当成字符串结束 | `"content": "解放前跟同一个\u300c庄户嘴\u300d的佃农。"` |
+| `"content": "大大爷"噗"地吹灭蜡烛"` | 同上 | `"content": "大大爷\u300c噗\u300d地吹灭蜡烛"` |
+
+**处理规则**：
+- 原文中所有中文引号 `" "` → 替换为直角引号 `\u300c \u300d`（即 `「」`）
+- 拟声词引号（如「汪汪」「噗」「咯咯」）同上处理
+- 如果不确定字符编码，推荐**先用 Python `json.dumps()` 序列化**，它自动处理所有转义
+
+**正确示例**：
+```json
+{"content": "解放前跟同一个\u300c庄户嘴\u300d的佃农。"}
+```
+
+**错误示例**（会报错）：
+```json
+{"content": "解放前跟同一个"庄户嘴"的佃农。"}
+```
+
 ## 五、content 文本规则
 
 ### 5.1 长度限制（强制！）
@@ -116,6 +140,26 @@
 
 输出纯净 JSON，严禁 markdown 标记 ` ```json ` 包裹，严禁在 JSON 前后添加任何解释性文字。
 
+### 6.1 输出方式（推荐使用方式 A）
+
+**方式 A — Python 序列化（推荐）**
+先用 `write_file` 写一个临时 Python 脚本（如 `gen_json.py`），用 `json.dump(data, f, ensure_ascii=False, indent=2)` 生成 JSON 文件，然后执行 `python gen_json.py` 并在完成后删除：
+
+```python
+import json
+data = {"character_map": {...}, "script": [...]}
+with open("输出路径.json", "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+```
+✅ 自动转义所有特殊字符，不存在引号泄露问题。
+
+**方式 B — 直接 write_file（高风险，仅限确认内容不含裸引号时使用）**
+- content 内所有中文引号必须手写为 `\u300c` / `\u300d`（即 `「」`）
+- 严禁直接写 `"庄户嘴"` — 必须写成 `\u300c庄户嘴\u300d`
+- 如果 fidelity gate 阶段因 JSON 解析失败 → 重试时必须改用方式 A
+
+> ⚠️ 即使你觉得 content 里没有引号，也建议用方式 A。LLM 手写 JSON 时容易在拟声词、书名、地名引用处漏掉转义。
+
 ## 七、模板示例
 
 ```json
@@ -146,9 +190,12 @@ python scripts/fix_all.py output/
 ```
 
 `fix_all.py` 会：
-1. 修复 content 中的未转义中文引号
-2. 自动补上 emo_vector（全0数组）
-3. 自动补上 ref_emotion（"中性"）
+1. **自动预修复**：若 JSON 非法（如 content 内裸引号），自动尝试文本级修复再解析
+2. 修复 content 中的未转义中文引号
+3. 自动补上 emo_vector（全0数组）
+4. 自动补上 ref_emotion（"中性"）
+
+> ⚠️ 即使 JSON 解析失败，先运行 `fix_all.py` 再试，它内置了预修复逻辑。
 
 ## 九、常见错误自查表（输出前逐项核对）
 
@@ -164,6 +211,8 @@ python scripts/fix_all.py output/
 | 8 | 角色名一致 | 全文同一角色同名词 | 林廷扬/总镖头/狮子林 混用 |
 | 9 | 台词语气标签 | 非旁白必须带 `[xxx]` 标签 | 全部台词无标签，平淡如水 |
 | 10 | 三字段完整 | speaker, content, delay 全有 | 漏掉 delay |
+| 11 | **引号转义** | content 内中文引号用 `「」` 或 `\u300c\u300d` | 用 ASCII `"` 导致 JSON 解析失败 |
+| 12 | **输出方式** | 优先用 Python `json.dump()` 序列化 | 手写 JSON 字符串模板
 
 ## 转换指令模板
 

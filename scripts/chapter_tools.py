@@ -191,12 +191,86 @@ def extract_last_meaningful_text(text):
     return last_line.strip()
 
 
+def _pre_fix_bare_quotes_inline(raw_text):
+    """
+    内联预修复：在 json.load 之前修复 content 内裸 ASCII 双引号。
+    使用 ", "delay"/",/"] 等作为 content 值结束的可靠标记，按行处理。
+    兼容压缩单行 JSON 和格式化多行 JSON。
+    """
+    lines = raw_text.split('\n')
+    fixed_lines = []
+    fixed_count = 0
+    for line in lines:
+        # 兼容 "content": " 和 "content":" 两种格式
+        for marker in ['"content": "', '"content":"']:
+            idx = line.find(marker)
+            if idx >= 0:
+                prefix = line[:idx + len(marker)]
+                rest = line[idx + len(marker):]
+                # content 结束标记优先级
+                end_markers = ['", "delay"', '","delay"', '",', '"}', '"]']
+                end_idx = -1
+                for em in end_markers:
+                    end_idx = rest.find(em)
+                    if end_idx >= 0:
+                        break
+                if end_idx >= 0:
+                    body = rest[:end_idx]
+                    suffix = rest[end_idx:]
+                    if '"' in body:
+                        parts = body.split('"')
+                        fixed_parts = []
+                        for i, part in enumerate(parts):
+                            if i % 2 == 0:
+                                fixed_parts.append(part)
+                            else:
+                                fixed_parts.append('\u300c' + part + '\u300d')
+                        line = prefix + ''.join(fixed_parts) + suffix
+                        fixed_count += 1
+                    break  # 匹配到一个 marker 就跳过其他的
+        fixed_lines.append(line)
+    if fixed_count > 0:
+        print(f"     🔧 预修复 content 内裸引号: {fixed_count} 处")
+    return '\n'.join(fixed_lines)
+
+
 def fidelity_check(txt_path, json_path):
     """fidelity gate: 比对 TXT 末句与 JSON 末句，检测台词遗漏"""
+    # ═══════ Step 0: JSON 合法性预检 ═══════
+    print("  🔍 [预检] 校验 JSON 语法...")
     with open(txt_path, 'r', encoding='utf-8') as f:
         txt_content = f.read()
     with open(json_path, 'r', encoding='utf-8') as f:
-        json_data = json.load(f)
+        raw_json = f.read()
+
+    json_data = None
+    try:
+        json_data = json.loads(raw_json)
+        print("     ✅ JSON 语法合法")
+    except json.JSONDecodeError as e:
+        print(f"     ❌ JSON 语法错误: {e}")
+        print("     💡 建议: 先运行 python scripts/fix_all.py 尝试自动修复")
+        # 内联预修复逻辑，不依赖模块导入路径
+        try:
+            print("     🔧 尝试文本级预修复...")
+            fixed = _pre_fix_bare_quotes_inline(raw_json)
+            json_data = json.loads(fixed)
+            with open(json_path, 'w', encoding='utf-8') as f:
+                f.write(fixed)
+            print("     ✅ 预修复成功，已写回文件")
+        except Exception as e2:
+            print(f"     ❌ 预修复也失败: {e2}")
+            return {
+                'pass': False,
+                'reason': 'JSON 解析失败且预修复无效',
+                'txt_last': '(预检失败)',
+                'json_last': '(预检失败)',
+                'txt_quote_count': 0,
+                'json_dialogue_count': 0,
+                'quote_diff': 0,
+                'overlap_ratio': '0%',
+                'issues': ['JSON 语法错误']
+            }
 
     # --- 提取 TXT 末句 ---
     txt_last = extract_last_meaningful_text(txt_content)
